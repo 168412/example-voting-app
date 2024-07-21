@@ -4,7 +4,6 @@ using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
-using System.Threading.Tasks; // Add this directive for Task<>
 using Newtonsoft.Json;
 using Npgsql;
 using StackExchange.Redis;
@@ -13,12 +12,12 @@ namespace Worker
 {
     public class Program
     {
-        public static async Task<int> Main(string[] args)
+        public static int Main(string[] args)
         {
             try
             {
                 var pgsql = OpenDbConnection("Server=db;Username=postgres;Password=postgres;");
-                var redisConn = await RedisConnection.OpenRedisConnectionAsync("redis", "redis_password");
+                var redisConn = OpenRedisConnection("redis");
                 var redis = redisConn.GetDatabase();
 
                 // Keep alive is not implemented in Npgsql yet. This workaround was recommended:
@@ -33,13 +32,11 @@ namespace Worker
                     Thread.Sleep(100);
 
                     // Reconnect redis if down
-                    if (redisConn == null || !redisConn.IsConnected)
-                    {
+                    if (redisConn == null || !redisConn.IsConnected) {
                         Console.WriteLine("Reconnecting Redis");
-                        redisConn = await RedisConnection.OpenRedisConnectionAsync("redis", "redis_password");
+                        redisConn = OpenRedisConnection("redis");
                         redis = redisConn.GetDatabase();
                     }
-
                     string json = redis.ListLeftPopAsync("votes").Result;
                     if (json != null)
                     {
@@ -52,8 +49,7 @@ namespace Worker
                             pgsql = OpenDbConnection("Server=db;Username=postgres;Password=postgres;");
                         }
                         else
-                        {
-                            // Normal +1 vote requested
+                        { // Normal +1 vote requested
                             UpdateVote(pgsql, vote.voter_id, vote.vote);
                         }
                     }
@@ -106,6 +102,34 @@ namespace Worker
             return connection;
         }
 
+        private static ConnectionMultiplexer OpenRedisConnection(string hostname)
+        {
+            // Use IP address to workaround https://github.com/StackExchange/StackExchange.Redis/issues/410
+            var ipAddress = redis;
+            Console.WriteLine($"Found redis at {ipAddress}");
+
+            while (true)
+            {
+                try
+                {
+                    Console.Error.WriteLine("Connecting to redis");
+                    return ConnectionMultiplexer.Connect(ipAddress);
+                }
+                catch (RedisConnectionException)
+                {
+                    Console.Error.WriteLine("Waiting for redis");
+                    Thread.Sleep(1000);
+                }
+            }
+        }
+
+        private static string GetIp(string hostname)
+            => Dns.GetHostEntryAsync(hostname)
+                .Result
+                .AddressList
+                .First(a => a.AddressFamily == AddressFamily.InterNetwork)
+                .ToString();
+
         private static void UpdateVote(NpgsqlConnection connection, string voterId, string vote)
         {
             var command = connection.CreateCommand();
@@ -125,44 +149,6 @@ namespace Worker
             {
                 command.Dispose();
             }
-        }
-    }
-
-    public static class RedisConnection
-    {
-        public static async Task<ConnectionMultiplexer> OpenRedisConnectionAsync(string hostname, string password, int database = 0, int socketTimeout = 5000)
-        {
-            // Use IP address to workaround https://github.com/StackExchange/StackExchange.Redis/issues/410
-            var ipAddress = redis;
-            Console.WriteLine($"Found redis at {ipAddress}");
-
-            var configurationOptions = new ConfigurationOptions
-            {
-                EndPoints = { ipAddress },
-                Password = password,
-                DefaultDatabase = database,
-                SocketTimeout = socketTimeout
-            };
-
-            while (true)
-            {
-                try
-                {
-                    Console.Error.WriteLine("Connecting to redis");
-                    return await ConnectionMultiplexer.ConnectAsync(configurationOptions);
-                }
-                catch (RedisConnectionException ex)
-                {
-                    Console.Error.WriteLine($"Waiting for redis: {ex.Message}");
-                    Thread.Sleep(1000);
-                }
-            }
-        }
-
-        private static async Task<string> GetIpAsync(string hostname)
-        {
-            var entry = await Dns.GetHostEntryAsync(hostname);
-            return entry.AddressList.First(a => a.AddressFamily == AddressFamily.InterNetwork).ToString();
         }
     }
 }
