@@ -102,33 +102,53 @@ namespace Worker
             return connection;
         }
 
-        private static ConnectionMultiplexer OpenRedisConnection(string hostname)
-        {
-            // Use IP address to workaround https://github.com/StackExchange/StackExchange.Redis/issues/410
-            var ipAddress = GetIp(hostname);
-            Console.WriteLine($"Found redis at {ipAddress}");
+public class RedisConnection
+{
+    private static async Task<ConnectionMultiplexer> OpenRedisConnectionAsync(string hostname, string password, int database = 0, int socketTimeout = 5000)
+    {
+        // Use IP address to workaround https://github.com/StackExchange/StackExchange.Redis/issues/410
+        var ipAddress = await GetIpAsync(hostname);
+        Console.WriteLine($"Found redis at {ipAddress}");
 
-            while (true)
+        var configurationOptions = new ConfigurationOptions
+        {
+            EndPoints = { ipAddress },
+            Password = password,
+            DefaultDatabase = database,
+            SocketTimeout = socketTimeout
+        };
+
+        while (true)
+        {
+            try
             {
-                try
-                {
-                    Console.Error.WriteLine("Connecting to redis");
-                    return ConnectionMultiplexer.Connect(ipAddress);
-                }
-                catch (RedisConnectionException)
-                {
-                    Console.Error.WriteLine("Waiting for redis");
-                    Thread.Sleep(1000);
-                }
+                Console.Error.WriteLine("Connecting to redis");
+                return await ConnectionMultiplexer.ConnectAsync(configurationOptions);
+            }
+            catch (RedisConnectionException ex)
+            {
+                Console.Error.WriteLine($"Waiting for redis: {ex.Message}");
+                Thread.Sleep(1000);
             }
         }
+    }
 
-        private static string GetIp(string hostname)
-            => Dns.GetHostEntryAsync(hostname)
-                .Result
-                .AddressList
-                .First(a => a.AddressFamily == AddressFamily.InterNetwork)
-                .ToString();
+    private static async Task<string> GetIpAsync(string hostname)
+    {
+        var entry = await Dns.GetHostEntryAsync(hostname);
+        return entry.AddressList.First(a => a.AddressFamily == AddressFamily.InterNetwork).ToString();
+    }
+
+    public static void Main(string[] args)
+    {
+        var hostname = "redis";  // Change to your Redis hostname
+        var password = "your_redis_password";  // Change to your Redis password if any
+        var database = 0;  // Change to your Redis database if not default
+
+        var connection = OpenRedisConnectionAsync(hostname, password, database).GetAwaiter().GetResult();
+        Console.WriteLine("Connected to Redis");
+    }
+}
 
         private static void UpdateVote(NpgsqlConnection connection, string voterId, string vote)
         {
