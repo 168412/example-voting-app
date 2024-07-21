@@ -142,7 +142,7 @@ public class RedisConnection
     public static void Main(string[] args)
     {
         var hostname = "redis";  // Change to your Redis hostname
-        var password = "your_redis_password";  // Change to your Redis password if any
+        var password = "redis_password";  // Change to your Redis password if any
         var database = 0;  // Change to your Redis database if not default
 
         var connection = OpenRedisConnectionAsync(hostname, password, database).GetAwaiter().GetResult();
